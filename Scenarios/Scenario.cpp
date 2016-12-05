@@ -67,7 +67,7 @@ Scenario::Scenario(int _car, int _drivingStyle, float _setSpeed, int _initialWea
 
 	TIME::SET_CLOCK_TIME(hour, minute, 0);
 
-	if(_initialWeather == -1) _initiañWeather = rand() % 12;
+	if (_initialWeather == -1) _initialWeather = rand() % 12;
 	switch (_initialWeather) {
 		default:
 		case 0: GAMEPLAY::SET_WEATHER_TYPE_NOW_PERSIST("CLEAR"); break;
@@ -245,3 +245,8 @@ float Scenario::getVehicleSteeringAngle() {
 	return getFloatValue(vehicle, 0x8CC)/-0.628319; //TODO: Depends on vehicle?
 }
 
+bool Scenario::isVehicleOnRoad()
+{
+	Vector3 vehCoords = ENTITY::GET_ENTITY_COORDS(vehicle, true);
+	return PATHFIND::IS_POINT_ON_ROAD(vehCoords.x, vehCoords.y, vehCoords.z, vehicle);
+}

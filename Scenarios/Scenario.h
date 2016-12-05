@@ -35,4 +35,6 @@ public:
 	float getVehicleThrottlePosition();
 	float getVehicleBrakePosition();
 	float getVehicleSteeringAngle();
+
+	bool isVehicleOnRoad();
 };

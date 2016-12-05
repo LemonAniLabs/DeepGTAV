@@ -32,12 +32,20 @@ Environment::Environment(int _imageWidth, int _imageHeight, int captureFreq, std
 
 	nsample = 1;
 	lastRecordingTime = std::clock() + ((float) (30.0 * CLOCKS_PER_SEC));
+
+	InitializeSharedScreenMemory(&screen_image_data);
+	//InitializeSharedRewardMemory(&shared_reward_memory);
 }
 
 Environment::~Environment(){
+
+	DestroySharedScreenMemory();
+	//DestroyRewardSharedMemory();
+
 	ReleaseDC(hWnd, hWindowDC);
 	DeleteDC(hCaptureDC);
 	DeleteObject(hCaptureBitmap);
+	
 }
 
 
@@ -49,6 +57,7 @@ void Environment::step() {
 	if (delay >= recordingPeriod) {
 		lastRecordingTime = std::clock();
 		saveSample();
+		updateRewardInfo();
 	}
 }
 
@@ -59,9 +68,26 @@ void Environment::saveSample() {
 		+ std::to_string(scenario.getVehicleSteeringAngle()) + " " + std::to_string(scenario.getVehicleThrottlePosition()) + " " + std::to_string(scenario.getVehicleYawRate()) + " " + std::to_string(scenario.getVehicleDirection()) + "\n";
 
 	Gdiplus::Bitmap image(hCaptureBitmap, (HPALETTE)0);
-	image.Save((datasetDir + std::to_wstring(nsample) + L".png").c_str(), &pngClsid, NULL);
+	//image.Save((datasetDir + std::to_wstring(nsample) + L".png").c_str(), &pngClsid, NULL);
 	indexFile.write(line.c_str(), line.length());
 	
+	screen_image_data->sampleCount = nsample;
+	screen_image_data->width = image.GetWidth();
+	screen_image_data->height = image.GetHeight();
+	
+	Gdiplus::BitmapData bmpData;
+	Gdiplus::Rect rect(0, 0, screen_image_data->width, screen_image_data->height);
+	image.LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat24bppRGB, &bmpData);
+	BYTE* temp = (bmpData.Stride>0) ? ((BYTE*)bmpData.Scan0) : ((BYTE*)bmpData.Scan0 + bmpData.Stride*(screen_image_data->height - 1));
+	screen_image_data->stride = bmpData.Stride;
+	memcpy(screen_image_data->imageData, temp, abs(bmpData.Stride)*bmpData.Height);
+	image.UnlockBits(&bmpData);
+
+	Ped player_ped = PLAYER::PLAYER_PED_ID();
+	int vehicle = PED::GET_VEHICLE_PED_IS_USING(player_ped);
+	Vector3 speed = ENTITY::GET_ENTITY_SPEED_VECTOR(vehicle, true);
+	//shared_reward_memory->speed = speed.y;
+
 	nsample++;
 }
 
@@ -112,3 +138,95 @@ int GetEncoderClsid(const WCHAR* format, CLSID* pClsid)
 	free(pImageCodecInfo);
 	return -1;  // Failure
 }
+
+// Screen image shared memory
+HANDLE screenImageFileMap;
+LPBYTE lpScreenImageSharedMemory = NULL;
+void Environment::InitializeSharedScreenMemory(SharedScreenData **agentControlData)
+{
+	int totalSize = sizeof(SharedScreenData);
+
+
+	screenImageFileMap = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, totalSize, SCREEN_IMAGE_SHARED_MEMORY);
+	if (!screenImageFileMap)
+	{
+		return;
+	}
+
+	lpScreenImageSharedMemory = (LPBYTE)MapViewOfFile(screenImageFileMap, FILE_MAP_ALL_ACCESS, 0, 0, totalSize);
+	if (!lpScreenImageSharedMemory)
+	{
+		CloseHandle(screenImageFileMap);
+		screenImageFileMap = NULL;
+		return;
+	}
+
+	*agentControlData = reinterpret_cast<SharedScreenData*>(lpScreenImageSharedMemory);
+}
+
+void Environment::DestroySharedScreenMemory()
+{
+	if (lpScreenImageSharedMemory && screenImageFileMap)
+	{
+		UnmapViewOfFile(lpScreenImageSharedMemory);
+		CloseHandle(screenImageFileMap);
+
+		screenImageFileMap = NULL;
+		lpScreenImageSharedMemory = NULL;
+	}
+}
+
+// Reward shared memory
+HANDLE rewardFileMap;
+LPBYTE lpRewardSharedMemory = NULL;
+void Environment::InitializeSharedRewardMemory(SharedRewardData **rewardData)
+{
+	int totalSize = sizeof(SharedRewardData);
+
+	std::stringstream strName;
+	strName << REWARD_SHARED_MEMORY;
+	rewardFileMap = CreateFileMapping(INVALID_HANDLE_VALUE, NULL,
+		PAGE_READWRITE, 0, totalSize, strName.str().c_str());
+
+	if (!rewardFileMap)
+	{
+		return;
+	}
+
+	lpRewardSharedMemory = static_cast<LPBYTE>(
+		MapViewOfFile(rewardFileMap, FILE_MAP_ALL_ACCESS, 0, 0, totalSize));
+
+	if (!lpRewardSharedMemory)
+	{
+		CloseHandle(rewardFileMap);
+		rewardFileMap = NULL;
+		return;
+	}
+
+	*rewardData = reinterpret_cast<SharedRewardData*>(lpRewardSharedMemory);
+	(*rewardData)->should_reset_agent = true;
+	(*rewardData)->desired_speed = -8192;
+	(*rewardData)->desired_spin = -8192;
+
+}
+
+void Environment::DestroyRewardSharedMemory()
+{
+	if (lpRewardSharedMemory && rewardFileMap)
+	{
+		UnmapViewOfFile(lpRewardSharedMemory);
+		CloseHandle(rewardFileMap);
+
+		rewardFileMap = NULL;
+		lpRewardSharedMemory = NULL;
+	}
+}
+
+void Environment::updateRewardInfo()
+{
+	//shared_reward_memory->on_road = scenario.isVehicleOnRoad();
+	//shared_reward_memory->speed = scenario.getVehicleSpeed();
+	
+}
+
+// end reward shared memory
